@@ -1,0 +1,494 @@
+<!-- <!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Subnet Calculator — CN Project</title>
+  <style>
+    :root{--bg:#0f1724;--card:#0b1220;--accent:#06b6d4;--muted:#94a3b8;--good:#10b981;--danger:#ef4444}
+    *{box-sizing:border-box;font-family:Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial}
+    body{margin:0;min-height:100vh;background:linear-gradient(180deg,#071029 0%,#071826 60%);color:#e6eef6;display:flex;align-items:center;justify-content:center;padding:28px}
+    .wrap{max-width:1000px;width:100%;display:grid;grid-template-columns:420px 1fr;gap:24px}
+    .card{background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));border:1px solid rgba(255,255,255,0.03);padding:20px;border-radius:12px;box-shadow:0 6px 24px rgba(2,6,23,0.6)}
+    h1{margin:0;font-size:20px}
+    p.lead{color:var(--muted);margin:8px 0 18px;font-size:13px}
+
+    label{display:block;color:var(--muted);font-size:13px;margin-top:12px}
+    input[type=text], select{width:100%;padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.04);background:transparent;color:inherit}
+    .btn{display:inline-block;padding:10px 14px;border-radius:8px;border:none;background:var(--accent);color:#042022;font-weight:600;cursor:pointer;margin-top:12px}
+    .btn.secondary{background:transparent;border:1px solid rgba(255,255,255,0.04);color:var(--accent)}
+
+    .result{padding:14px;border-radius:10px;background:linear-gradient(180deg, rgba(6,182,212,0.03), rgba(6,182,212,0.01));border:1px solid rgba(6,182,212,0.06);}
+    table{width:100%;border-collapse:collapse}
+    td,th{padding:8px 6px;border-bottom:1px dashed rgba(255,255,255,0.02);font-size:14px}
+    th{color:var(--muted);text-align:left;font-weight:600}
+
+    .explain{font-size:13px;color:var(--muted);margin-top:12px}
+    .badge{display:inline-block;padding:6px 8px;border-radius:8px;background:rgba(255,255,255,0.02);color:var(--muted);font-size:12px;margin-right:8px}
+
+    .footer{font-size:13px;color:var(--muted);margin-top:12px}
+    .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+    .copy{cursor:pointer;color:var(--accent);font-weight:600}
+
+    /* responsive */
+    @media (max-width:880px){.wrap{grid-template-columns:1fr}.card{padding:16px}}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>Subnet Calculator</h1>
+      <p class="lead">Enter an IPv4 address in CIDR format (for example <code>192.168.1.10/26</code>) to calculate network, broadcast, masks and more. This tool explains subnetting concepts for your CN project.</p>
+
+      <label for="ipinput">IPv4 (CIDR)</label>
+      <input id="ipinput" type="text" placeholder="e.g., 192.168.1.10/24" value="192.168.1.10/26">
+
+      <div class="grid2">
+        <button id="calcBtn" class="btn">Calculate</button>
+        <button id="clearBtn" class="btn secondary">Clear</button>
+      </div>
+
+      <div class="explain">
+        <div style="margin-top:10px;"><span class="badge">CIDR</span>Classless Inter-Domain Routing notation — <code>/n</code> means <code>n</code> bits are network bits.</div>
+        <div style="margin-top:8px;"><span class="badge">Quick tip</span>Try values like <code>10.0.0.5/8</code>, <code>172.16.5.6/20</code>, or <code>192.168.1.128/25</code></div>
+      </div>
+
+      <div class="footer">Made for CN mini-project — shows classful vs classless calculations and helps explain subnetting in reports.</div>
+    </div>
+
+    <div class="card">
+      <h1>Results & Details</h1>
+      <div id="output" class="result" aria-live="polite">
+        <p style="margin:0;color:var(--muted)">No calculation yet. Enter an IP/CIDR and click <strong>Calculate</strong>.</p>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Utility functions
+    function ipToInt(ip){
+      const parts = ip.split('.').map(x=>parseInt(x,10));
+      if(parts.length!==4 || parts.some(x=>isNaN(x) || x<0 || x>255)) return null;
+      return ((parts[0]<<24)>>>0) + ((parts[1]<<16)>>>0) + ((parts[2]<<8)>>>0) + (parts[3]>>>0);
+    }
+    function intToIp(int){
+      int = int >>> 0;
+      return [(int>>>24)&255, (int>>>16)&255, (int>>>8)&255, int&255].join('.');
+    }
+    function maskFromPrefix(p){
+      if(p<0||p>32) return null;
+      return (p===0)?0:((0xFFFFFFFF << (32-p))>>>0);
+    }
+    function bin32(x){
+      return (x>>>0).toString(2).padStart(32,'0');
+    }
+
+    function getClass(ip){
+      const first = parseInt(ip.split('.')[0],10);
+      if(first>=1 && first<=126) return 'A';
+      if(first>=128 && first<=191) return 'B';
+      if(first>=192 && first<=223) return 'C';
+      if(first>=224 && first<=239) return 'D (Multicast)';
+      return 'E (Experimental)';
+    }
+
+    function calc(ipcidr){
+      const [ip, pfx] = ipcidr.split('/').map(s=>s && s.trim());
+      if(!ip||typeof pfx==='undefined') return {error:'Enter in format: 192.168.1.10/24'};
+      const prefix = Number(pfx);
+      if(Number.isNaN(prefix) || prefix<0 || prefix>32) return {error:'Invalid prefix (must be 0-32)'};
+      const ipInt = ipToInt(ip);
+      if(ipInt===null) return {error:'Invalid IPv4 address'};
+
+      const maskInt = maskFromPrefix(prefix);
+      const netInt = (ipInt & maskInt) >>> 0;
+      const broadcastInt = (netInt | (~maskInt >>>0)) >>> 0;
+      const total = Math.pow(2, 32 - prefix) >>> 0;
+      const usable = total>2 ? total-2 : (total===2?0:0);
+      const firstHost = total>2 ? (netInt + 1) >>> 0 : null;
+      const lastHost = total>2 ? (broadcastInt - 1) >>> 0 : null;
+
+      // classful info
+      const ipClass = getClass(ip);
+      let defaultBits = null;
+      if(ipClass==='A') defaultBits = 8;
+      else if(ipClass==='B') defaultBits = 16;
+      else if(ipClass==='C') defaultBits = 24;
+      let borrowed = null; let subnets = null;
+      if(defaultBits){
+        borrowed = prefix - defaultBits;
+        if(borrowed>0) subnets = Math.pow(2, borrowed);
+      }
+
+      return {
+        ip: ip,
+        prefix: prefix,
+        ipInt: ipInt,
+        netInt: netInt,
+        broadcastInt: broadcastInt,
+        maskInt: maskInt,
+        total: total,
+        usable: usable,
+        firstHost: firstHost,
+        lastHost: lastHost,
+        ipClass: ipClass,
+        defaultBits: defaultBits,
+        borrowed: borrowed,
+        subnets: subnets
+      };
+    }
+
+    function render(res){
+      const out = document.getElementById('output');
+      if(res.error){
+        out.innerHTML = `<div style="color:var(--danger);font-weight:700">Error: ${res.error}</div>`;
+        return;
+      }
+      const maskStr = intToIp(res.maskInt);
+      const netStr = intToIp(res.netInt);
+      const bcastStr = intToIp(res.broadcastInt);
+      const first = res.firstHost ? intToIp(res.firstHost) : 'N/A';
+      const last = res.lastHost ? intToIp(res.lastHost) : 'N/A';
+      const binMask = bin32(res.maskInt).match(/.{1,8}/g).join('.');
+
+      out.innerHTML = `
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <div style="font-weight:700">${res.ip}/${res.prefix}</div>
+          <div class="copy" onclick="navigator.clipboard.writeText('${res.ip}/${res.prefix}')">Copy CIDR</div>
+        </div>
+        <table style="margin-top:12px">
+          <tr><th>Network Address</th><td>${netStr}</td></tr>
+          <tr><th>Broadcast Address</th><td>${bcastStr}</td></tr>
+          <tr><th>Subnet Mask</th><td>${maskStr} (/${res.prefix})</td></tr>
+          <tr><th>Wildcard Mask</th><td>${intToIp(~res.maskInt >>>0)}</td></tr>
+          <tr><th>Total Addresses</th><td>${res.total}</td></tr>
+          <tr><th>Usable Hosts</th><td>${res.usable}</td></tr>
+          <tr><th>First Host</th><td>${first}</td></tr>
+          <tr><th>Last Host</th><td>${last}</td></tr>
+          <tr><th>Binary Mask</th><td style="font-family:monospace">${binMask}</td></tr>
+          <tr><th>IP Class</th><td>${res.ipClass}</td></tr>
+        </table>
+
+        <div style="margin-top:12px">
+          <strong>Subnetting details</strong>
+          <div style="color:var(--muted);margin-top:6px">Network bits: ${res.prefix} | Host bits: ${32-res.prefix}</div>
+          ${res.defaultBits?`<div style="color:var(--muted);margin-top:6px">Default classful mask bits: ${res.defaultBits} | Borrowed bits: ${res.borrowed ?? 0} | Subnets created: ${res.subnets ?? '1 (no subnetting)'}</div>`:''}
+        </div>
+
+        <div style="margin-top:12px;color:var(--muted);font-size:13px">
+          <strong>Explanation:</strong>
+          <div>Network address identifies the subnet (host bits = 0). Broadcast address reaches all hosts (host bits = 1). Usable hosts exclude network & broadcast addresses.</div>
+        </div>
+      `;
+    }
+
+    document.getElementById('calcBtn').addEventListener('click', ()=>{
+      const v = document.getElementById('ipinput').value.trim();
+      const res = calc(v);
+      render(res);
+    });
+    document.getElementById('clearBtn').addEventListener('click', ()=>{
+      document.getElementById('ipinput').value='';
+      document.getElementById('output').innerHTML='<p style="margin:0;color:var(--muted)">No calculation yet. Enter an IP/CIDR and click <strong>Calculate</strong>.</p>';
+    });
+
+    // allow Enter key
+    document.getElementById('ipinput').addEventListener('keydown', (e)=>{ if(e.key==='Enter') document.getElementById('calcBtn').click(); });
+  </script>
+</body>
+</html> -->
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Subnet Calculator — CN Project (IPv4 + IPv6)</title>
+  <style>
+    :root{--bg:#0f1724;--card:#0b1220;--accent:#06b6d4;--muted:#94a3b8;--good:#10b981;--danger:#ef4444}
+    *{box-sizing:border-box;font-family:Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial}
+    body{margin:0;min-height:100vh;background:linear-gradient(180deg,#071029 0%,#071826 60%);color:#e6eef6;display:flex;align-items:center;justify-content:center;padding:28px}
+    .wrap{max-width:1100px;width:100%;display:grid;grid-template-columns:440px 1fr;gap:24px}
+    .card{background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));border:1px solid rgba(255,255,255,0.03);padding:20px;border-radius:12px;box-shadow:0 6px 24px rgba(2,6,23,0.6)}
+    h1{margin:0;font-size:20px}
+    p.lead{color:var(--muted);margin:8px 0 18px;font-size:13px}
+
+    label{display:block;color:var(--muted);font-size:13px;margin-top:12px}
+    input[type=text], select{width:100%;padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.04);background:transparent;color:inherit}
+    .btn{display:inline-block;padding:10px 14px;border-radius:8px;border:none;background:var(--accent);color:#042022;font-weight:600;cursor:pointer;margin-top:12px}
+    .btn.secondary{background:transparent;border:1px solid rgba(255,255,255,0.04);color:var(--accent)}
+
+    .result{padding:14px;border-radius:10px;background:linear-gradient(180deg, rgba(6,182,212,0.03), rgba(6,182,212,0.01));border:1px solid rgba(6,182,212,0.06);}
+    table{width:100%;border-collapse:collapse}
+    td,th{padding:8px 6px;border-bottom:1px dashed rgba(255,255,255,0.02);font-size:14px}
+    th{color:var(--muted);text-align:left;font-weight:600}
+
+    .explain{font-size:13px;color:var(--muted);margin-top:12px}
+    .badge{display:inline-block;padding:6px 8px;border-radius:8px;background:rgba(255,255,255,0.02);color:var(--muted);font-size:12px;margin-right:8px}
+
+    .footer{font-size:13px;color:var(--muted);margin-top:12px}
+    .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+    .copy{cursor:pointer;color:var(--accent);font-weight:600}
+
+    .version-toggle{display:flex;gap:8px;margin-top:8px}
+    .pill{padding:8px 10px;border-radius:999px;border:1px solid rgba(255,255,255,0.03);cursor:pointer}
+    .pill.active{background:rgba(6,182,212,0.08);border-color:rgba(6,182,212,0.12);color:var(--accent);font-weight:700}
+
+    /* responsive */
+    @media (max-width:880px){.wrap{grid-template-columns:1fr}.card{padding:16px}}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>Subnet Calculator — IPv4 & IPv6</h1>
+      <p class="lead">Enter an IP address with prefix (CIDR). Choose IPv4 or IPv6 mode. The tool calculates network info and explains subnetting details for both protocols.</p>
+
+      <div class="version-toggle" role="tablist" aria-label="IP version">
+        <div id="v4pill" class="pill active" role="tab">IPv4</div>
+        <div id="v6pill" class="pill" role="tab">IPv6</div>
+      </div>
+
+      <label for="ipinput">IP Address with Prefix</label>
+      <input id="ipinput" type="text" placeholder="e.g., 192.168.1.10/24 or 2001:db8::1/64" value="192.168.1.10/26">
+
+      <div class="grid2">
+        <button id="calcBtn" class="btn">Calculate</button>
+        <button id="clearBtn" class="btn secondary">Clear</button>
+      </div>
+
+      <div class="explain">
+        <div style="margin-top:10px;"><span class="badge">CIDR</span>For IPv4 use /0–/32; for IPv6 use /0–/128. IPv6 has no broadcast address; networks are represented by <code>address/prefix</code>.</div>
+        <div style="margin-top:8px;"><span class="badge">Tips</span>Try: <code>10.0.0.5/8</code>, <code>172.16.5.6/20</code>, <code>192.168.1.128/25</code>, <code>2001:db8::/48</code>, <code>fe80::1/64</code>.</div>
+      </div>
+
+      <div class="footer">Made for CN mini-project — includes IPv6 expand/compress and prefix notes for demonstration.</div>
+    </div>
+
+    <div class="card">
+      <h1>Results & Details</h1>
+      <div id="output" class="result" aria-live="polite">
+        <p style="margin:0;color:var(--muted)">No calculation yet. Enter an IP/CIDR and click <strong>Calculate</strong>.</p>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // ---------- Utilities ----------
+    function ipToInt(ip){
+      const parts = ip.split('.').map(x=>parseInt(x,10));
+      if(parts.length!==4 || parts.some(x=>isNaN(x) || x<0 || x>255)) return null;
+      return ((parts[0]<<24)>>>0) + ((parts[1]<<16)>>>0) + ((parts[2]<<8)>>>0) + (parts[3]>>>0);
+    }
+    function intToIp(int){ int = int >>> 0; return [(int>>>24)&255, (int>>>16)&255, (int>>>8)&255, int&255].join('.'); }
+    function maskFromPrefix(p){ if(p<0||p>32) return null; return (p===0)?0:((0xFFFFFFFF << (32-p))>>>0); }
+    function bin32(x){ return (x>>>0).toString(2).padStart(32,'0'); }
+    function getClass(ip){ const first = parseInt(ip.split('.')[0],10); if(first>=1 && first<=126) return 'A'; if(first>=128 && first<=191) return 'B'; if(first>=192 && first<=223) return 'C'; if(first>=224 && first<=239) return 'D (Multicast)'; return 'E (Experimental)'; }
+
+    // ---------- IPv6 helpers (BigInt) ----------
+    function expandIPv6(addr){
+      if(!addr) return null;
+      // split prefix if present
+      addr = addr.trim();
+      const parts = addr.split('/');
+      const addrOnly = parts[0];
+      // Handle IPv4-mapped IPv6 (not fully supported) - return original
+      if(addrOnly.includes('.')) return addrOnly;
+      // Count '::' and expand
+      if(addrOnly.indexOf('::')!==-1){
+        const [left,right] = addrOnly.split('::');
+        const leftParts = left?left.split(':').filter(Boolean):[];
+        const rightParts = right?right.split(':').filter(Boolean):[];
+        const missing = 8 - (leftParts.length + rightParts.length);
+        if(missing < 0) return null;
+        const mid = new Array(missing).fill('0');
+        const full = [...leftParts, ...mid, ...rightParts].map(h=>h.padStart(4,'0'));
+        if(full.length!==8) return null;
+        return full.join(':');
+      } else {
+        const parts = addrOnly.split(':').map(h=>h.padStart(4,'0'));
+        if(parts.length!==8) return null;
+        return parts.join(':');
+      }
+    }
+
+    function compressIPv6(expanded){
+      // expanded is 8 hextets
+      const hextets = expanded.split(':').map(h=>h.replace(/^0+/, '') || '0');
+      // find longest run of zeros
+      let bestStart=-1,bestLen=0; let curStart=-1,curLen=0;
+      for(let i=0;i<8;i++){
+        if(hextets[i]==='0'){
+          if(curStart===-1) curStart=i; curLen++;
+        } else {
+          if(curLen>bestLen){bestLen=curLen;bestStart=curStart;} curStart=-1;curLen=0;
+        }
+      }
+      if(curLen>bestLen){bestLen=curLen;bestStart=curStart;}
+      if(bestLen<=1) return hextets.join(':');
+      const left = hextets.slice(0,bestStart).join(':');
+      const right = hextets.slice(bestStart+bestLen).join(':');
+      if(left==='' && right==='') return '::';
+      if(left==='') return '::'+right;
+      if(right==='') return left+'::';
+      return left+'::'+right;
+    }
+
+    function ipv6ToBigInt(expanded){
+      const parts = expanded.split(':');
+      if(parts.length!==8) return null;
+      let acc = 0n;
+      for(const p of parts){ acc = (acc << 16n) + BigInt('0x'+p); }
+      return acc;
+    }
+    function bigIntToIPv6Str(big){
+      const parts = [];
+      let tmp = big;
+      for(let i=0;i<8;i++){ const hextet = Number((tmp >> (BigInt(16*(7-i)))) & 0xFFFFn); parts.push(hextet.toString(16).padStart(4,'0')); }
+      return parts.join(':');
+    }
+    function maskFromPrefixIPv6(p){ if(p<0||p>128) return null; if(p===0) return 0n; return ((~0n) << BigInt(128 - p)) & ((1n<<128n)-1n); }
+
+    function powerOfTwoAsString(exp){ // returns '2^n' or full if small
+      if(exp<60) return (1n<<BigInt(exp)).toString();
+      return `2^${exp}`;
+    }
+
+    // ---------- Calculation ----------
+    function calcIPv4(ipcidr){
+      const [ip, pfx] = ipcidr.split('/').map(s=>s && s.trim());
+      if(!ip||typeof pfx==='undefined') return {error:'Enter in format: 192.168.1.10/24'};
+      const prefix = Number(pfx);
+      if(Number.isNaN(prefix) || prefix<0 || prefix>32) return {error:'Invalid prefix (must be 0-32)'};
+      const ipInt = ipToInt(ip);
+      if(ipInt===null) return {error:'Invalid IPv4 address'};
+
+      const maskInt = maskFromPrefix(prefix);
+      const netInt = (ipInt & maskInt) >>> 0;
+      const broadcastInt = (netInt | (~maskInt >>>0)) >>> 0;
+      const total = Math.pow(2, 32 - prefix) >>> 0;
+      const usable = total>2 ? total-2 : (total===2?0:0);
+      const firstHost = total>2 ? (netInt + 1) >>> 0 : null;
+      const lastHost = total>2 ? (broadcastInt - 1) >>> 0 : null;
+
+      const ipClass = getClass(ip);
+      let defaultBits = null; let borrowed = null; let subnets = null;
+      if(ipClass==='A') defaultBits = 8; else if(ipClass==='B') defaultBits = 16; else if(ipClass==='C') defaultBits = 24;
+      if(defaultBits){ borrowed = prefix - defaultBits; if(borrowed>0) subnets = Math.pow(2, borrowed); }
+
+      return {version:4, ip: ip, prefix: prefix, ipInt: ipInt, netInt: netInt, broadcastInt: broadcastInt, maskInt: maskInt, total: total, usable: usable, firstHost: firstHost, lastHost: lastHost, ipClass: ipClass, defaultBits: defaultBits, borrowed: borrowed, subnets: subnets};
+    }
+
+    function calcIPv6(ipcidr){
+      const [addr, pfx] = ipcidr.split('/').map(s=>s && s.trim());
+      if(!addr||typeof pfx==='undefined') return {error:'Enter in format: 2001:db8::1/64'};
+      const prefix = Number(pfx);
+      if(Number.isNaN(prefix) || prefix<0 || prefix>128) return {error:'Invalid prefix (must be 0-128)'};
+      const expanded = expandIPv6(addr);
+      if(!expanded) return {error:'Invalid IPv6 address'};
+      const ipBig = ipv6ToBigInt(expanded);
+      if(ipBig===null) return {error:'IPv6 parse failed'};
+      const maskBig = maskFromPrefixIPv6(prefix);
+      const netBig = ipBig & maskBig;
+      const hostBits = 128 - prefix;
+      const totalStr = powerOfTwoAsString(hostBits);
+      const firstAddr = netBig; // typically the network address itself; hosts start at netBig+1 but IPv6 generally uses all addresses
+      const lastAddr = netBig | (~maskBig & ((1n<<128n)-1n));
+      const expandedNet = bigIntToIPv6Str(netBig);
+      const compressedNet = compressIPv6(expandedNet);
+      const expandedIp = expanded;
+      const compressedIp = compressIPv6(expandedIp);
+
+      return {version:6, input: addr, prefix: prefix, expandedIp: expandedIp, compressedIp: compressedIp, ipBig: ipBig, maskBig: maskBig, netBig: netBig, expandedNet: expandedNet, compressedNet: compressedNet, hostBits: hostBits, totalStr: totalStr, firstAddr: firstAddr, lastAddr: lastAddr};
+    }
+
+    // ---------- Render ----------
+    function render(res){
+      const out = document.getElementById('output');
+      if(res.error){ out.innerHTML = `<div style="color:var(--danger);font-weight:700">Error: ${res.error}</div>`; return; }
+      if(res.version===4){
+        const maskStr = intToIp(res.maskInt);
+        const netStr = intToIp(res.netInt);
+        const bcastStr = intToIp(res.broadcastInt);
+        const first = res.firstHost ? intToIp(res.firstHost) : 'N/A';
+        const last = res.lastHost ? intToIp(res.lastHost) : 'N/A';
+        const binMask = bin32(res.maskInt).match(/.{1,8}/g).join('.');
+        out.innerHTML = `
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <div style="font-weight:700">${res.ip}/${res.prefix}</div>
+            <div class="copy" onclick="navigator.clipboard.writeText('${res.ip}/${res.prefix}')">Copy CIDR</div>
+          </div>
+          <table style="margin-top:12px">
+            <tr><th>Network Address</th><td>${netStr}</td></tr>
+            <tr><th>Broadcast Address</th><td>${bcastStr}</td></tr>
+            <tr><th>Subnet Mask</th><td>${maskStr} (/${res.prefix})</td></tr>
+            <tr><th>Wildcard Mask</th><td>${intToIp(~res.maskInt >>>0)}</td></tr>
+            <tr><th>Total Addresses</th><td>${res.total}</td></tr>
+            <tr><th>Usable Hosts</th><td>${res.usable}</td></tr>
+            <tr><th>First Host</th><td>${first}</td></tr>
+            <tr><th>Last Host</th><td>${last}</td></tr>
+            <tr><th>Binary Mask</th><td style="font-family:monospace">${binMask}</td></tr>
+            <tr><th>IP Class</th><td>${res.ipClass}</td></tr>
+          </table>
+
+          <div style="margin-top:12px">
+            <strong>Subnetting details</strong>
+            <div style="color:var(--muted);margin-top:6px">Network bits: ${res.prefix} | Host bits: ${32-res.prefix}</div>
+            ${res.defaultBits?`<div style="color:var(--muted);margin-top:6px">Default classful mask bits: ${res.defaultBits} | Borrowed bits: ${res.borrowed ?? 0} | Subnets created: ${res.subnets ?? '1 (no subnetting)'}</div>`:''}
+          </div>
+
+          <div style="margin-top:12px;color:var(--muted);font-size:13px">
+            <strong>Explanation:</strong>
+            <div>Network address identifies the subnet (host bits = 0). Broadcast address reaches all hosts (host bits = 1). Usable hosts exclude network & broadcast addresses.</div>
+          </div>
+        `;
+      } else {
+        // IPv6 render
+        const netAddrExpanded = res.expandedNet;
+        const netAddrCompressed = res.compressedNet;
+        const ipExpanded = res.expandedIp;
+        const ipCompressed = res.compressedIp;
+        const totalHuman = (res.totalStr.startsWith('2^'))?res.totalStr:res.totalStr;
+        out.innerHTML = `
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <div style="font-weight:700">${res.input}/${res.prefix}</div>
+            <div class="copy" onclick="navigator.clipboard.writeText('${res.input}/${res.prefix}')">Copy CIDR</div>
+          </div>
+          <table style="margin-top:12px">
+            <tr><th>Address (expanded)</th><td style="font-family:monospace">${ipExpanded}</td></tr>
+            <tr><th>Address (compressed)</th><td>${ipCompressed}</td></tr>
+            <tr><th>Network (expanded)</th><td style="font-family:monospace">${netAddrExpanded}</td></tr>
+            <tr><th>Network (compressed)</th><td>${netAddrCompressed}/${res.prefix}</td></tr>
+            <tr><th>Prefix Length</th><td>/${res.prefix}</td></tr>
+            <tr><th>Host bits</th><td>${res.hostBits}</td></tr>
+            <tr><th>Total Addresses in Subnet</th><td>${totalHuman} ${res.totalStr.startsWith('2^')?`(≈ huge)` : ''}</td></tr>
+            <tr><th>Note</th><td>IPv6 does not use broadcast addresses. Addresses are usually allocated per subnet (e.g., /64).</td></tr>
+          </table>
+
+          <div style="margin-top:12px;color:var(--muted);font-size:13px">
+            <strong>Explanation (IPv6):</strong>
+            <div>IPv6 addresses are 128-bit and written as eight 16-bit hex groups. '::' compresses consecutive zero groups. Subnets use prefix length (/n). Common host subnet size is /64.</div>
+          </div>
+        `;
+      }
+    }
+
+    // ---------- UI logic ----------
+    let mode = 'v4';
+    const v4pill = document.getElementById('v4pill');
+    const v6pill = document.getElementById('v6pill');
+    function setMode(m){ mode=m; if(m==='v4'){ v4pill.classList.add('active'); v6pill.classList.remove('active'); document.getElementById('ipinput').placeholder='e.g., 192.168.1.10/24'; document.getElementById('ipinput').value='192.168.1.10/26'; } else { v6pill.classList.add('active'); v4pill.classList.remove('active'); document.getElementById('ipinput').placeholder='e.g., 2001:db8::1/64'; document.getElementById('ipinput').value='2001:db8::1/64'; } }
+    v4pill.addEventListener('click', ()=>setMode('v4'));
+    v6pill.addEventListener('click', ()=>setMode('v6'));
+
+    document.getElementById('calcBtn').addEventListener('click', ()=>{
+      const v = document.getElementById('ipinput').value.trim();
+      if(mode==='v4'){ const res = calcIPv4(v); render(res); } else { const res = calcIPv6(v); render(res); }
+    });
+    document.getElementById('clearBtn').addEventListener('click', ()=>{ document.getElementById('ipinput').value=''; document.getElementById('output').innerHTML='<p style="margin:0;color:var(--muted)">No calculation yet. Enter an IP/CIDR and click <strong>Calculate</strong>.</p>'; });
+    document.getElementById('ipinput').addEventListener('keydown', (e)=>{ if(e.key==='Enter') document.getElementById('calcBtn').click(); });
+
+    // initialize
+    setMode('v4');
+  </script>
+</body>
+</html>
